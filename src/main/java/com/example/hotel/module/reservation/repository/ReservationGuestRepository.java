@@ -12,6 +12,8 @@ public interface ReservationGuestRepository extends JpaRepository<ReservationGue
 
 	List<ReservationGuest> findAllByReservation_Id(UUID reservationId);
 
+	List<ReservationGuest> findAllByGuest_IdOrderByReservation_CheckInDateDesc(UUID guestId);
+
 	@EntityGraph(attributePaths = "guest")
 	List<ReservationGuest> findAllByReservation_IdIn(List<UUID> reservationIds);
 }
