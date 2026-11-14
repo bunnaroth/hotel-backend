@@ -91,7 +91,8 @@ public class Reservation {
 					|| target == ReservationStatus.CANCELLED
 					|| target == ReservationStatus.NO_SHOW;
 			case CHECKED_IN -> target == ReservationStatus.CHECKED_OUT;
-			case CHECKED_OUT, CANCELLED, NO_SHOW -> false;
+			case CHECKED_OUT -> false;
+			case CANCELLED, NO_SHOW -> false;
 		};
 		if (!allowed) {
 			throw new IllegalStateException("Reservation cannot transition from " + status + " to " + target);
@@ -102,6 +103,14 @@ public class Reservation {
 
 	public boolean isPendingAndExpired(Instant now) {
 		return status == ReservationStatus.PENDING && !expiresAt.isAfter(now);
+	}
+
+	public void updatePendingExpiry(Instant expiry) {
+		if (status != ReservationStatus.PENDING) {
+			throw new IllegalStateException("Only pending reservations can change expiry");
+		}
+		expiresAt = expiry;
+		updatedAt = Instant.now();
 	}
 
 	public UUID getId() {

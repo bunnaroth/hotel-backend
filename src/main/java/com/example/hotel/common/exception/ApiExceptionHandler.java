@@ -8,6 +8,11 @@ import com.example.hotel.module.guest.service.GuestService.InvalidGuestSearchExc
 import com.example.hotel.module.reservation.service.ReservationService.InvalidReservationRequestException;
 import com.example.hotel.module.reservation.service.ReservationService.RoomUnavailableException;
 import com.example.hotel.module.reservation.service.ReservationService.ReservationNotFoundException;
+import com.example.hotel.module.payment.stripe.StripeCheckoutNotFoundException;
+import com.example.hotel.module.payment.stripe.StripeGatewayException;
+import com.example.hotel.module.payment.stripe.StripePaymentNotConfiguredException;
+import com.example.hotel.module.payment.stripe.StripePaymentProviderException;
+import com.example.hotel.module.payment.stripe.StripeWebhookSignatureException;
 import com.example.hotel.module.room.service.RoomInventoryService.ResourceNotFoundException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -21,7 +26,8 @@ public class ApiExceptionHandler {
 	@ExceptionHandler({
 			HotelSettingsNotFoundException.class,
 			ResourceNotFoundException.class,
-			ReservationNotFoundException.class
+			ReservationNotFoundException.class,
+			StripeCheckoutNotFoundException.class
 	})
 	ProblemDetail handleNotFound(RuntimeException exception) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
@@ -43,6 +49,26 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(InvalidReservationRequestException.class)
 	ProblemDetail handleInvalidReservation(InvalidReservationRequestException exception) {
 		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+	}
+
+	@ExceptionHandler(IllegalStateException.class)
+	ProblemDetail handleInvalidReservationState(IllegalStateException exception) {
+		return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+	}
+
+	@ExceptionHandler(StripeWebhookSignatureException.class)
+	ProblemDetail handleInvalidStripeSignature() {
+		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Stripe webhook signature is invalid");
+	}
+
+	@ExceptionHandler(StripePaymentNotConfiguredException.class)
+	ProblemDetail handleStripeNotConfigured() {
+		return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, "Stripe payments are not configured");
+	}
+
+	@ExceptionHandler({StripePaymentProviderException.class, StripeGatewayException.class})
+	ProblemDetail handleStripeProviderFailure() {
+		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY, "Stripe payment processing failed");
 	}
 
 	@ExceptionHandler(InvalidGuestSearchException.class)
