@@ -61,10 +61,11 @@ public class RoomInventoryService {
 	@Transactional(readOnly = true)
 	public Page<RoomResponse> searchRooms(
 			Long roomTypeId,
+			String floorLabel,
 			OperationalStatus operationalStatus,
 			HousekeepingStatus housekeepingStatus,
 			Pageable pageable) {
-		return roomRepository.search(roomTypeId, operationalStatus, housekeepingStatus, pageable)
+		return roomRepository.search(roomTypeId, operationalStatus, housekeepingStatus, floorLabel, pageable)
 				.map(RoomInventoryService::toResponse);
 	}
 
@@ -91,8 +92,8 @@ public class RoomInventoryService {
 				request.roomNumber(),
 				roomType,
 				request.floorLabel(),
-				room.getOperationalStatus(),
-				room.getHousekeepingStatus());
+				request.operationalStatus(),
+				request.housekeepingStatus());
 		return toResponse(room);
 	}
 

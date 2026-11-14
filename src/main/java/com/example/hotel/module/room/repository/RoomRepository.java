@@ -53,6 +53,7 @@ public interface RoomRepository extends JpaRepository<HotelRoom, Long> {
 			  and room.housekeepingStatus in :housekeepingStatuses
 			  and room.roomType.active = true
 			  and (:roomTypeId is null or room.roomType.id = :roomTypeId)
+			  and (:floorLabel is null or room.floorLabel = :floorLabel)
 			  and room.roomType.maxOccupancy >= :guestCount
 			  and not exists (
 			      select allocation.id from RoomAllocation allocation
@@ -69,5 +70,20 @@ public interface RoomRepository extends JpaRepository<HotelRoom, Long> {
 			@Param("checkOutDate") LocalDate checkOutDate,
 			@Param("operationalStatus") OperationalStatus operationalStatus,
 			@Param("housekeepingStatuses") List<HousekeepingStatus> housekeepingStatuses,
+			@Param("floorLabel") String floorLabel,
+			Pageable pageable);
+
+	@Query("""
+			select room from HotelRoom room
+			where (:roomTypeId is null or room.roomType.id = :roomTypeId)
+			  and (:operationalStatus is null or room.operationalStatus = :operationalStatus)
+			  and (:housekeepingStatus is null or room.housekeepingStatus = :housekeepingStatus)
+			  and (:floorLabel is null or room.floorLabel = :floorLabel)
+			""")
+	Page<HotelRoom> search(
+			@Param("roomTypeId") Long roomTypeId,
+			@Param("operationalStatus") OperationalStatus operationalStatus,
+			@Param("housekeepingStatus") HousekeepingStatus housekeepingStatus,
+			@Param("floorLabel") String floorLabel,
 			Pageable pageable);
 }
