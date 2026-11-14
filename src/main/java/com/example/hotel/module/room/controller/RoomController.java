@@ -34,10 +34,11 @@ public class RoomController {
 	@GetMapping
 	public Page<RoomResponse> search(
 			@RequestParam(required = false) Long roomTypeId,
+			@RequestParam(required = false) String floorLabel,
 			@RequestParam(required = false) OperationalStatus operationalStatus,
 			@RequestParam(required = false) HousekeepingStatus housekeepingStatus,
 			@PageableDefault(size = 20, sort = "roomNumber") Pageable pageable) {
-		return service.searchRooms(roomTypeId, operationalStatus, housekeepingStatus, pageable);
+		return service.searchRooms(roomTypeId, floorLabel, operationalStatus, housekeepingStatus, pageable);
 	}
 
 	@PostMapping

@@ -9,7 +9,10 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import com.example.hotel.module.reservation.service.ReservationService;
+import com.example.hotel.module.payment.stripe.StripeGateway;
+import com.example.hotel.module.payment.stripe.StripeWebhookSignatureException;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.example.hotel.module.auth.entity.RoleEntity;
@@ -24,7 +27,14 @@ import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -40,7 +50,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 		"spring.datasource.driver-class-name=org.h2.Driver",
 		"spring.flyway.locations=classpath:db/migration",
 		"app.security.jwt.secret=0123456789abcdef0123456789abcdef",
-		"app.security.login.max-failed-attempts=2"
+		"app.security.login.max-failed-attempts=2",
+		"app.payment.stripe.secret-key=sk_test_for_mock_gateway",
+		"app.payment.stripe.webhook-secret=whsec_test_for_mock_gateway"
 })
 class HotelManagementBackendApplicationTests {
 
@@ -64,6 +76,9 @@ class HotelManagementBackendApplicationTests {
 
 	@Autowired
 	private ReservationService reservationService;
+
+	@MockitoBean
+	private StripeGateway stripeGateway;
 
 	@Test
 	void contextLoads() {
@@ -203,6 +218,298 @@ class HotelManagementBackendApplicationTests {
 	}
 
 	@Test
+	void ownerCanUpdateRoomStatusAndReceptionistCanAdvanceReservationLifecycle() throws Exception {
+		String ownerToken = loginToken(createUser("OWNER"));
+		String receptionistToken = loginToken(createUser("RECEPTIONIST"));
+		String roomNumber = UUID.randomUUID().toString().substring(0, 8);
+		long roomTypeId = createRoomType();
+		long roomId = createRoom(roomTypeId);
+		long reservedRoomId = createRoom(roomTypeId);
+
+		mockMvc.perform(put("/api/rooms/{id}", roomId)
+						.header("Authorization", "Bearer " + ownerToken)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "roomNumber":"%s",
+								  "roomTypeId":%d,
+								  "floorLabel":"1",
+								  "operationalStatus":"OUT_OF_SERVICE",
+								  "housekeepingStatus":"INSPECTED"
+								}
+								""".formatted(roomNumber, roomTypeId)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.operationalStatus").value("OUT_OF_SERVICE"))
+				.andExpect(jsonPath("$.housekeepingStatus").value("INSPECTED"));
+
+		String reservationJson = mockMvc.perform(post("/api/reservations")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(reservationRequest("2030-07-10", "2030-07-12", reservedRoomId)))
+				.andExpect(status().isCreated())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		String reservationId = extractString(reservationJson, "id");
+
+		mockMvc.perform(patch("/api/reservations/{id}/confirm", reservationId)
+						.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CONFIRMED"));
+
+		mockMvc.perform(patch("/api/reservations/{id}/check-in", reservationId)
+						.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CHECKED_IN"));
+	}
+
+	@Test
+	void reservationTransitionsReleaseRoomAllocationsAndRejectInvalidProgressions() throws Exception {
+		String receptionistToken = loginToken(createUser("RECEPTIONIST"));
+		long roomTypeId = createRoomType();
+		long roomId = createRoom(roomTypeId);
+		String reservationJson = mockMvc.perform(post("/api/reservations")
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(reservationRequest("2030-08-10", "2030-08-12", roomId)))
+				.andExpect(status().isCreated())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		String reservationId = extractString(reservationJson, "id");
+
+		mockMvc.perform(patch("/api/reservations/{id}/confirm", reservationId)
+					.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CONFIRMED"));
+
+		mockMvc.perform(patch("/api/reservations/{id}/check-in", reservationId)
+					.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CHECKED_IN"));
+
+		mockMvc.perform(patch("/api/reservations/{id}/check-out", reservationId)
+					.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CHECKED_OUT"));
+
+		mockMvc.perform(patch("/api/reservations/{id}/cancel", reservationId)
+					.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isConflict());
+
+		String cancelledReservationJson = mockMvc.perform(post("/api/reservations")
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(reservationRequest("2030-09-10", "2030-09-12", roomId)))
+				.andExpect(status().isCreated())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		String cancelledReservationId = extractString(cancelledReservationJson, "id");
+
+		mockMvc.perform(patch("/api/reservations/{id}/cancel", cancelledReservationId)
+					.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CANCELLED"));
+
+		mockMvc.perform(patch("/api/reservations/{id}/no-show", cancelledReservationId)
+					.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isConflict());
+
+		String noShowReservationJson = mockMvc.perform(post("/api/reservations")
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(reservationRequest("2030-10-10", "2030-10-12", roomId)))
+				.andExpect(status().isCreated())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		String noShowReservationId = extractString(noShowReservationJson, "id");
+
+		mockMvc.perform(patch("/api/reservations/{id}/no-show", noShowReservationId)
+					.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("NO_SHOW"));
+
+		mockMvc.perform(get("/api/availability")
+					.param("checkInDate", "2030-10-10")
+					.param("checkOutDate", "2030-10-12")
+					.param("roomTypeId", Long.toString(roomTypeId))
+					.param("guestCount", "2"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalElements").value(1));
+	}
+
+	@Test
+	void reservationPaymentFlowAuthorizesCapturesAndRefundsAndGeneratesFolio() throws Exception {
+		String receptionistToken = loginToken(createUser("RECEPTIONIST"));
+		long roomTypeId = createRoomType();
+		long roomId = createRoom(roomTypeId);
+		String reservationJson = mockMvc.perform(post("/api/reservations")
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(reservationRequest("2030-11-10", "2030-11-12", roomId)))
+				.andExpect(status().isCreated())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		String reservationId = extractString(reservationJson, "id");
+
+		mockMvc.perform(patch("/api/reservations/{id}/confirm", reservationId)
+				.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CONFIRMED"));
+
+		mockMvc.perform(post("/api/reservations/{id}/payments/authorize", reservationId)
+				.header("Authorization", "Bearer " + receptionistToken)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+							{"amount":250.00,"currency":"USD","provider":"STRIPE"}
+							"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("AUTHORIZED"));
+
+		mockMvc.perform(post("/api/reservations/{id}/payments/capture", reservationId)
+				.header("Authorization", "Bearer " + receptionistToken)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+							{"amount":250.00,"currency":"USD","provider":"STRIPE"}
+							"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("CAPTURED"));
+
+		mockMvc.perform(post("/api/reservations/{id}/payments/refund", reservationId)
+				.header("Authorization", "Bearer " + receptionistToken)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+							{"amount":250.00,"currency":"USD","provider":"STRIPE"}
+							"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("REFUNDED"));
+
+		mockMvc.perform(get("/api/reservations/{id}/folio", reservationId)
+				.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.totalAmount").value(250.0))
+				.andExpect(jsonPath("$.amountPaid").value(250.0))
+				.andExpect(jsonPath("$.amountRefunded").value(250.0))
+				.andExpect(jsonPath("$.outstandingBalance").value(0.0));
+	}
+
+	@Test
+	void guestCanStartStripeCheckoutAndSignedWebhookConfirmsReservationIdempotently() throws Exception {
+		long roomTypeId = createRoomType();
+		long roomId = createRoom(roomTypeId);
+		String reservationJson = mockMvc.perform(post("/api/reservations")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(reservationRequest("2031-01-10", "2031-01-12", roomId)))
+				.andExpect(status().isCreated())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		String reservationId = extractString(reservationJson, "id");
+		String sessionId = "cs_test_" + UUID.randomUUID().toString().replace("-", "");
+		String sessionUrl = "https://checkout.stripe.test/" + sessionId;
+		when(stripeGateway.createCheckoutSession(
+				any(StripeGateway.CheckoutRequest.class),
+				eq("sk_test_for_mock_gateway"),
+				anyString()))
+				.thenReturn(new StripeGateway.CheckoutSession(sessionId, sessionUrl, java.time.Instant.now().plusSeconds(2100)));
+
+		mockMvc.perform(post("/api/reservations/{id}/payments/checkout", reservationId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.sessionId").value(sessionId))
+				.andExpect(jsonPath("$.checkoutUrl").value(sessionUrl))
+				.andExpect(jsonPath("$.amount").value(250.0))
+				.andExpect(jsonPath("$.currency").value("USD"));
+		mockMvc.perform(post("/api/reservations/{id}/payments/checkout", reservationId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.sessionId").value(sessionId));
+
+		String payload = "{\"type\":\"checkout.session.completed\"}";
+		String signature = "test-signature";
+		when(stripeGateway.verifyWebhook(payload, signature, "whsec_test_for_mock_gateway"))
+				.thenReturn(new StripeGateway.WebhookEvent(
+						"evt_test",
+						"checkout.session.completed",
+						sessionId,
+						"paid",
+						"pi_test"));
+		for (int delivery = 0; delivery < 2; delivery++) {
+			mockMvc.perform(post("/api/payments/stripe/webhook")
+							.header("Stripe-Signature", signature)
+							.contentType(MediaType.APPLICATION_JSON)
+							.content(payload))
+					.andExpect(status().isNoContent());
+		}
+
+		mockMvc.perform(get("/api/payments/stripe/checkout-sessions/{sessionId}", sessionId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.reservationStatus").value("CONFIRMED"))
+				.andExpect(jsonPath("$.paymentStatus").value("CAPTURED"));
+		assertEquals(1, jdbcTemplate.queryForObject(
+				"SELECT COUNT(*) FROM reservation_payment WHERE checkout_session_id = ? AND status = 'CAPTURED'",
+				Integer.class,
+				sessionId));
+		verify(stripeGateway, times(2)).verifyWebhook(payload, signature, "whsec_test_for_mock_gateway");
+		verify(stripeGateway, times(1)).createCheckoutSession(
+				any(StripeGateway.CheckoutRequest.class),
+				eq("sk_test_for_mock_gateway"),
+				anyString());
+	}
+
+	@Test
+	void expiredStripeCheckoutMarksPaymentFailedWithoutConfirmingReservation() throws Exception {
+		long roomId = createRoom(createRoomType());
+		String reservationJson = mockMvc.perform(post("/api/reservations")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(reservationRequest("2031-02-10", "2031-02-12", roomId)))
+				.andExpect(status().isCreated())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		String reservationId = extractString(reservationJson, "id");
+		String sessionId = "cs_test_expired_" + UUID.randomUUID().toString().replace("-", "");
+		when(stripeGateway.createCheckoutSession(
+				any(StripeGateway.CheckoutRequest.class),
+				eq("sk_test_for_mock_gateway"),
+				anyString()))
+				.thenReturn(new StripeGateway.CheckoutSession(
+						sessionId,
+						"https://checkout.stripe.test/" + sessionId,
+						java.time.Instant.now().plusSeconds(2100)));
+		mockMvc.perform(post("/api/reservations/{id}/payments/checkout", reservationId))
+				.andExpect(status().isOk());
+
+		String payload = "{\"type\":\"checkout.session.expired\"}";
+		String signature = "test-signature";
+		when(stripeGateway.verifyWebhook(payload, signature, "whsec_test_for_mock_gateway"))
+				.thenReturn(new StripeGateway.WebhookEvent(
+						"evt_expired",
+						"checkout.session.expired",
+						sessionId,
+						"unpaid",
+						null));
+		mockMvc.perform(post("/api/payments/stripe/webhook")
+						.header("Stripe-Signature", signature)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(payload))
+				.andExpect(status().isNoContent());
+
+		mockMvc.perform(get("/api/payments/stripe/checkout-sessions/{sessionId}", sessionId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.reservationStatus").value("PENDING"))
+				.andExpect(jsonPath("$.paymentStatus").value("FAILED"));
+	}
+
+	@Test
+	void stripeWebhookRejectsInvalidSignature() throws Exception {
+		when(stripeGateway.verifyWebhook(anyString(), anyString(), eq("whsec_test_for_mock_gateway")))
+				.thenThrow(new StripeWebhookSignatureException("invalid", new RuntimeException("invalid signature")));
+
+		mockMvc.perform(post("/api/payments/stripe/webhook")
+						.header("Stripe-Signature", "invalid")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{}"))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
 	void publicReservationHoldsRoomsAndUsesHalfOpenStayDates() throws Exception {
 		long roomTypeId = createRoomType();
 		long roomId = createRoom(roomTypeId);
@@ -321,6 +628,34 @@ class HotelManagementBackendApplicationTests {
 						.header("Authorization", "Bearer " + receptionistToken)
 						.param("query", "T"))
 				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void guestHistoryAndDashboardEndpointsReturnReservationAndOccupancySummaries() throws Exception {
+		String receptionistToken = loginToken(createUser("RECEPTIONIST"));
+		long roomTypeId = createRoomType();
+		long roomId = createRoom(roomTypeId);
+		mockMvc.perform(post("/api/reservations")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(reservationRequest("2030-07-10", "2030-07-12", roomId)))
+				.andExpect(status().isCreated());
+		UUID guestId = jdbcTemplate.queryForObject(
+				"SELECT guest_id FROM guest WHERE first_name = 'Test' AND last_name = 'Guest' ORDER BY created_at DESC LIMIT 1",
+				UUID.class);
+
+		mockMvc.perform(get("/api/guests/{guestId}/reservations", guestId)
+				.header("Authorization", "Bearer " + receptionistToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].status").value("PENDING"))
+				.andExpect(jsonPath("$[0].guests.length()").value(2));
+
+		mockMvc.perform(get("/api/reservations/dashboard")
+				.header("Authorization", "Bearer " + receptionistToken)
+				.param("date", "2030-07-10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.date").value("2030-07-10"))
+				.andExpect(jsonPath("$.arrivals").value(greaterThanOrEqualTo(1)))
+				.andExpect(jsonPath("$.upcomingArrivals.length()").value(greaterThanOrEqualTo(1)));
 	}
 
 	private String loginToken(String loginName) throws Exception {

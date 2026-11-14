@@ -1,4 +1,4 @@
-package com.example.hotel.security;
+package com.example.hotel.config.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,6 +29,9 @@ public class SecurityConfig {
 						.requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/availability").permitAll()
 						.requestMatchers(HttpMethod.POST, "/api/reservations").permitAll()
+						.requestMatchers(HttpMethod.POST, "/api/reservations/*/payments/checkout").permitAll()
+						.requestMatchers(HttpMethod.POST, "/api/payments/stripe/webhook").permitAll()
+						.requestMatchers(HttpMethod.GET, "/api/payments/stripe/checkout-sessions/**").permitAll()
 						.requestMatchers("/api/reservations/**")
 						.hasAnyRole("OWNER", "GENERAL_MANAGER", "ADMINISTRATOR", "RECEPTIONIST")
 						.requestMatchers("/api/guests/**")

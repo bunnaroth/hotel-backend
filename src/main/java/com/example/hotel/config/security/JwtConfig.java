@@ -1,4 +1,4 @@
-package com.example.hotel.security;
+package com.example.hotel.config.security;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
