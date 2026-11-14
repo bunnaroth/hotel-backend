@@ -54,11 +54,27 @@ public class RoomAllocation {
 		active = false;
 	}
 
+	public HotelRoom getRoom() {
+		return room;
+	}
+
 	public Long getRoomId() {
 		return room.getId();
 	}
 
 	public UUID getReservationId() {
 		return reservation.getId();
+	}
+
+	public LocalDate getCheckInDate() {
+		return checkInDate;
+	}
+
+	public LocalDate getCheckOutDate() {
+		return checkOutDate;
+	}
+
+	public boolean isActive() {
+		return active;
 	}
 }
