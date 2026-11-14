@@ -31,9 +31,12 @@ public class AvailabilityController {
 			@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkInDate,
 			@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkOutDate,
 			@RequestParam(required = false) @Positive Long roomTypeId,
+			@RequestParam(required = false) String floorLabel,
+			@RequestParam(required = false) com.example.hotel.module.room.enums.OperationalStatus operationalStatus,
+			@RequestParam(required = false) com.example.hotel.module.room.enums.HousekeepingStatus housekeepingStatus,
 			@RequestParam(defaultValue = "1") @Positive int guestCount,
 			@PageableDefault(size = 20, sort = "roomNumber") Pageable pageable) {
 		return reservationService.searchAvailability(
-				checkInDate, checkOutDate, roomTypeId, guestCount, pageable);
+				checkInDate, checkOutDate, roomTypeId, guestCount, floorLabel, operationalStatus, housekeepingStatus, pageable);
 	}
 }

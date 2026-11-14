@@ -43,6 +43,14 @@ public class ReservationGuest {
 		return guest.getId();
 	}
 
+	public Guest getGuest() {
+		return guest;
+	}
+
+	public Reservation getReservation() {
+		return reservation;
+	}
+
 	public UUID getReservationId() {
 		return reservation.getId();
 	}

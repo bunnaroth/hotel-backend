@@ -1,29 +1,40 @@
 package com.example.hotel.module.reservation.service;
 
+import java.math.BigDecimal;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.security.SecureRandom;
 import java.util.Map;
-import java.util.Comparator;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 import com.example.hotel.module.guest.dto.GuestRequest;
 import com.example.hotel.module.guest.entity.Guest;
 import com.example.hotel.module.guest.repository.GuestRepository;
+import com.example.hotel.module.hotel.entity.HotelSettings;
+import com.example.hotel.module.hotel.repository.HotelSettingsRepository;
 import com.example.hotel.module.reservation.dto.AvailableRoomResponse;
 import com.example.hotel.module.reservation.dto.ReservationCreateRequest;
+import com.example.hotel.module.reservation.dto.ReservationDashboardResponse;
+import com.example.hotel.module.reservation.dto.ReservationFolioResponse;
+import com.example.hotel.module.reservation.dto.ReservationPaymentRequest;
+import com.example.hotel.module.reservation.dto.ReservationPaymentResponse;
 import com.example.hotel.module.reservation.dto.ReservationResponse;
 import com.example.hotel.module.reservation.entity.Reservation;
 import com.example.hotel.module.reservation.entity.ReservationGuest;
+import com.example.hotel.module.reservation.entity.ReservationPayment;
 import com.example.hotel.module.reservation.entity.RoomAllocation;
+import com.example.hotel.module.reservation.enums.ReservationPaymentStatus;
 import com.example.hotel.module.reservation.enums.ReservationStatus;
 import com.example.hotel.module.reservation.repository.ReservationGuestRepository;
+import com.example.hotel.module.reservation.repository.ReservationPaymentRepository;
 import com.example.hotel.module.reservation.repository.ReservationRepository;
 import com.example.hotel.module.reservation.repository.RoomAllocationRepository;
 import com.example.hotel.module.room.entity.HotelRoom;
@@ -54,7 +65,10 @@ public class ReservationService {
 	private final RoomRepository roomRepository;
 	private final ReservationRepository reservationRepository;
 	private final ReservationGuestRepository reservationGuestRepository;
+	private final ReservationPaymentRepository reservationPaymentRepository;
 	private final RoomAllocationRepository roomAllocationRepository;
+	private final HotelSettingsRepository hotelSettingsRepository;
+	private final ReservationPricingService pricingService;
 	private final Duration pendingTtl;
 
 	public ReservationService(
@@ -62,7 +76,10 @@ public class ReservationService {
 			RoomRepository roomRepository,
 			ReservationRepository reservationRepository,
 			ReservationGuestRepository reservationGuestRepository,
+			ReservationPaymentRepository reservationPaymentRepository,
 			RoomAllocationRepository roomAllocationRepository,
+			HotelSettingsRepository hotelSettingsRepository,
+			ReservationPricingService pricingService,
 			@Value("${app.reservation.pending-ttl}") Duration pendingTtl) {
 		if (pendingTtl.isNegative() || pendingTtl.isZero()) {
 			throw new IllegalArgumentException("Reservation pending TTL must be positive");
@@ -71,7 +88,10 @@ public class ReservationService {
 		this.roomRepository = roomRepository;
 		this.reservationRepository = reservationRepository;
 		this.reservationGuestRepository = reservationGuestRepository;
+		this.reservationPaymentRepository = reservationPaymentRepository;
 		this.roomAllocationRepository = roomAllocationRepository;
+		this.hotelSettingsRepository = hotelSettingsRepository;
+		this.pricingService = pricingService;
 		this.pendingTtl = pendingTtl;
 	}
 
@@ -81,18 +101,26 @@ public class ReservationService {
 			LocalDate checkOutDate,
 			Long roomTypeId,
 			int guestCount,
+			String floorLabel,
+			OperationalStatus operationalStatus,
+			HousekeepingStatus housekeepingStatus,
 			Pageable pageable) {
 		validateDateRange(checkInDate, checkOutDate);
 		if (guestCount < 1) {
 			throw new InvalidReservationRequestException("Guest count must be positive");
 		}
+		OperationalStatus effectiveOperationalStatus = operationalStatus == null ? OperationalStatus.AVAILABLE : operationalStatus;
+		List<HousekeepingStatus> effectiveHousekeepingStatuses = housekeepingStatus == null
+				? ASSIGNABLE_HOUSEKEEPING_STATUSES
+				: List.of(housekeepingStatus);
 		return roomRepository.findAvailableRooms(
 						roomTypeId,
 						guestCount,
 						checkInDate,
 						checkOutDate,
-						OperationalStatus.AVAILABLE,
-						ASSIGNABLE_HOUSEKEEPING_STATUSES,
+						effectiveOperationalStatus,
+						effectiveHousekeepingStatuses,
+						floorLabel,
 						pageable)
 				.map(room -> new AvailableRoomResponse(
 						room.getId(),
@@ -156,6 +184,119 @@ public class ReservationService {
 		return toResponse(reservation, reservationGuests, allocations);
 	}
 
+	@Transactional
+	public ReservationPaymentResponse authorizeReservationPayment(UUID reservationId, ReservationPaymentRequest request) {
+		Reservation reservation = findReservation(reservationId);
+		ensureReservationAcceptsPayment(reservation);
+		ReservationPayment latest = reservationPaymentRepository.findFirstByReservation_IdOrderByCreatedAtDesc(reservationId)
+				.orElse(null);
+		if (latest != null && latest.getStatus() == ReservationPaymentStatus.AUTHORIZED) {
+			return toPaymentResponse(latest, reservationId);
+		}
+		if (latest != null && latest.getStatus() == ReservationPaymentStatus.CAPTURED) {
+			throw new IllegalStateException("Payment has already been captured for this reservation");
+		}
+		ReservationPayment payment = createPayment(reservation, request, ReservationPaymentStatus.AUTHORIZED);
+		return toPaymentResponse(payment, reservationId);
+	}
+
+	@Transactional
+	public ReservationPaymentResponse captureReservationPayment(UUID reservationId, ReservationPaymentRequest request) {
+		Reservation reservation = findReservation(reservationId);
+		ensureReservationAcceptsPayment(reservation);
+		ReservationPayment latest = reservationPaymentRepository.findFirstByReservation_IdOrderByCreatedAtDesc(reservationId)
+				.orElse(null);
+		if (latest != null && latest.getStatus() == ReservationPaymentStatus.CAPTURED) {
+			return toPaymentResponse(latest, reservationId);
+		}
+		if (latest != null && latest.getStatus() == ReservationPaymentStatus.REFUNDED) {
+			throw new IllegalStateException("Refunded reservations cannot be captured again");
+		}
+		ReservationPayment payment = createPayment(reservation, request, ReservationPaymentStatus.CAPTURED);
+		return toPaymentResponse(payment, reservationId);
+	}
+
+	@Transactional
+	public ReservationPaymentResponse refundReservationPayment(UUID reservationId, ReservationPaymentRequest request) {
+		Reservation reservation = findReservation(reservationId);
+		if (reservation.getStatus() == ReservationStatus.PENDING) {
+			throw new IllegalStateException("Pending reservations cannot be refunded before confirmation");
+		}
+		ReservationPayment latest = reservationPaymentRepository.findFirstByReservation_IdOrderByCreatedAtDesc(reservationId)
+				.orElse(null);
+		if (latest != null && latest.getStatus() == ReservationPaymentStatus.REFUNDED) {
+			return toPaymentResponse(latest, reservationId);
+		}
+		ReservationPayment payment = createPayment(reservation, request, ReservationPaymentStatus.REFUNDED);
+		return toPaymentResponse(payment, reservationId);
+	}
+
+	@Transactional(readOnly = true)
+	public ReservationFolioResponse getReservationFolio(UUID reservationId) {
+		Reservation reservation = findReservation(reservationId);
+		List<ReservationPayment> payments = reservationPaymentRepository.findAllByReservation_IdOrderByCreatedAtAsc(reservationId);
+		BigDecimal totalStayAmount = pricingService.calculateStayAmount(reservation);
+		BigDecimal amountPaid = payments.stream()
+				.filter(payment -> payment.getStatus() == ReservationPaymentStatus.CAPTURED)
+				.map(ReservationPayment::getAmount)
+				.reduce(BigDecimal.ZERO, BigDecimal::add);
+		BigDecimal amountRefunded = payments.stream()
+				.filter(payment -> payment.getStatus() == ReservationPaymentStatus.REFUNDED)
+				.map(ReservationPayment::getAmount)
+				.reduce(BigDecimal.ZERO, BigDecimal::add);
+		BigDecimal outstandingBalance = totalStayAmount.subtract(amountPaid);
+		if (amountRefunded.signum() > 0) {
+			outstandingBalance = outstandingBalance.subtract(amountRefunded);
+		}
+		if (outstandingBalance.signum() < 0) {
+			outstandingBalance = BigDecimal.ZERO;
+		}
+
+		List<ReservationFolioResponse.FolioLine> lines = new ArrayList<>();
+		if (totalStayAmount.signum() > 0) {
+			lines.add(new ReservationFolioResponse.FolioLine(
+					"ROOM_CHARGE",
+					"Room charge for stay",
+					totalStayAmount,
+					reservation.getCheckInDate()));
+		}
+		for (ReservationPayment payment : payments) {
+			if (payment.getStatus() == ReservationPaymentStatus.AUTHORIZED) {
+				lines.add(new ReservationFolioResponse.FolioLine(
+						"AUTHORIZATION",
+						"Payment authorization",
+						payment.getAmount(),
+						reservation.getCheckInDate()));
+			}
+			if (payment.getStatus() == ReservationPaymentStatus.CAPTURED) {
+				lines.add(new ReservationFolioResponse.FolioLine(
+						"CAPTURE",
+						"Payment capture",
+						payment.getAmount(),
+						reservation.getCheckInDate()));
+			}
+			if (payment.getStatus() == ReservationPaymentStatus.REFUNDED) {
+				lines.add(new ReservationFolioResponse.FolioLine(
+						"REFUND",
+						"Refund",
+						payment.getAmount().negate(),
+						reservation.getCheckInDate()));
+			}
+		}
+
+		return new ReservationFolioResponse(
+				reservation.getId(),
+				reservation.getBookingReference(),
+				hotelSettingsRepository.findById((short) 1)
+						.map(HotelSettings::getCurrencyCode)
+						.orElse("USD"),
+				totalStayAmount,
+				amountPaid,
+				amountRefunded,
+				outstandingBalance,
+				lines);
+	}
+
 	@Transactional(readOnly = true)
 	public Page<ReservationResponse> searchReservations(
 			String bookingReference,
@@ -181,6 +322,55 @@ public class ReservationService {
 		return toResponsePage(new PageImpl<>(List.of(reservation))).getContent().getFirst();
 	}
 
+	@Transactional(readOnly = true)
+	public ReservationDashboardResponse getStaffDashboard(LocalDate date) {
+		return getDashboard(date);
+	}
+
+	@Transactional(readOnly = true)
+	public ReservationDashboardResponse getDashboard(LocalDate date) {
+		LocalDate dashboardDate = date == null ? LocalDate.now() : date;
+		List<Reservation> reservations = reservationRepository.findAll();
+		Set<Long> occupiedRoomIds = roomAllocationRepository.findAll().stream()
+				.filter(RoomAllocation::isActive)
+				.filter(allocation -> !dashboardDate.isBefore(allocation.getCheckInDate())
+						&& dashboardDate.isBefore(allocation.getCheckOutDate()))
+				.map(RoomAllocation::getRoomId)
+				.collect(Collectors.toSet());
+		List<Reservation> arrivals = reservations.stream()
+				.filter(reservation -> reservation.getCheckInDate().equals(dashboardDate))
+				.filter(reservation -> reservation.getStatus() != ReservationStatus.CANCELLED)
+				.filter(reservation -> reservation.getStatus() != ReservationStatus.NO_SHOW)
+				.toList();
+		List<Reservation> checkedIn = reservations.stream()
+				.filter(reservation -> reservation.getStatus() == ReservationStatus.CHECKED_IN)
+				.filter(reservation -> !dashboardDate.isBefore(reservation.getCheckInDate())
+						&& dashboardDate.isBefore(reservation.getCheckOutDate()))
+				.toList();
+		List<Reservation> upcoming = reservations.stream()
+				.filter(reservation -> reservation.getCheckInDate().isAfter(dashboardDate.minusDays(1)))
+				.filter(reservation -> reservation.getCheckInDate().isBefore(dashboardDate.plusDays(8)))
+				.filter(reservation -> reservation.getStatus() != ReservationStatus.CANCELLED)
+				.filter(reservation -> reservation.getStatus() != ReservationStatus.NO_SHOW)
+				.sorted(Comparator.comparing(Reservation::getCheckInDate))
+				.limit(10)
+				.toList();
+		long availableRooms = roomRepository.findAll().stream()
+				.filter(room -> room.getOperationalStatus() == OperationalStatus.AVAILABLE)
+				.filter(room -> room.getHousekeepingStatus() == HousekeepingStatus.CLEAN
+						|| room.getHousekeepingStatus() == HousekeepingStatus.INSPECTED)
+				.filter(room -> !occupiedRoomIds.contains(room.getId()))
+				.count();
+		Page<ReservationResponse> upcomingPage = toResponsePage(new PageImpl<>(upcoming, Pageable.unpaged(), upcoming.size()));
+		return new ReservationDashboardResponse(
+				dashboardDate,
+				arrivals.size(),
+				checkedIn.size(),
+				occupiedRoomIds.size(),
+				availableRooms,
+				upcomingPage.getContent());
+	}
+
 	@Transactional
 	public int expirePendingReservations() {
 		Instant now = Instant.now();
@@ -198,6 +388,86 @@ public class ReservationService {
 			expiredCount++;
 		}
 		return expiredCount;
+	}
+
+	@Transactional
+	public ReservationResponse confirmReservation(UUID reservationId) {
+		return transitionReservationStatus(reservationId, ReservationStatus.CONFIRMED);
+	}
+
+	@Transactional
+	public ReservationResponse cancelReservation(UUID reservationId) {
+		return transitionReservationStatus(reservationId, ReservationStatus.CANCELLED);
+	}
+
+	@Transactional
+	public ReservationResponse markNoShowReservation(UUID reservationId) {
+		return transitionReservationStatus(reservationId, ReservationStatus.NO_SHOW);
+	}
+
+	@Transactional
+	public ReservationResponse checkInReservation(UUID reservationId) {
+		return transitionReservationStatus(reservationId, ReservationStatus.CHECKED_IN);
+	}
+
+	@Transactional
+	public ReservationResponse checkOutReservation(UUID reservationId) {
+		return transitionReservationStatus(reservationId, ReservationStatus.CHECKED_OUT);
+	}
+
+	private ReservationResponse transitionReservationStatus(UUID reservationId, ReservationStatus targetStatus) {
+		Reservation reservation = reservationRepository.findById(reservationId)
+				.orElseThrow(() -> new ReservationNotFoundException(reservationId));
+		Instant now = Instant.now();
+		reservation.transitionTo(targetStatus, now);
+		if (targetStatus == ReservationStatus.CANCELLED
+				|| targetStatus == ReservationStatus.NO_SHOW
+				|| targetStatus == ReservationStatus.CHECKED_OUT) {
+			roomAllocationRepository.findAllByReservation_IdAndActiveTrue(reservation.getId())
+					.forEach(RoomAllocation::release);
+		}
+		return toResponsePage(new PageImpl<>(List.of(reservation))).getContent().getFirst();
+	}
+
+	private Reservation findReservation(UUID reservationId) {
+		return reservationRepository.findById(reservationId)
+				.orElseThrow(() -> new ReservationNotFoundException(reservationId));
+	}
+
+	private ReservationPayment createPayment(
+			Reservation reservation,
+			ReservationPaymentRequest request,
+			ReservationPaymentStatus status) {
+		if (request.amount() == null || request.amount().signum() <= 0) {
+			throw new InvalidReservationRequestException("Payment amount must be greater than zero");
+		}
+		ReservationPayment payment = new ReservationPayment(
+				reservation,
+				request.provider(),
+				request.providerReference(),
+				status,
+				request.amount(),
+				request.currency());
+		return reservationPaymentRepository.save(payment);
+	}
+
+	private ReservationPaymentResponse toPaymentResponse(ReservationPayment payment, UUID reservationId) {
+		return new ReservationPaymentResponse(
+				payment.getId(),
+				reservationId,
+				payment.getStatus(),
+				payment.getAmount(),
+				payment.getCurrency(),
+				payment.getProvider(),
+				payment.getProviderReference(),
+				payment.getCreatedAt());
+	}
+
+	private void ensureReservationAcceptsPayment(Reservation reservation) {
+		ReservationStatus status = reservation.getStatus();
+		if (status == ReservationStatus.CANCELLED || status == ReservationStatus.NO_SHOW || status == ReservationStatus.CHECKED_OUT) {
+			throw new IllegalStateException("Payment is no longer allowed for a completed reservation");
+		}
 	}
 
 	private static Guest toGuest(GuestRequest request) {
