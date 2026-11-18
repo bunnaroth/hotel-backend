@@ -343,11 +343,6 @@ public class ReservationService {
 
 	@Transactional(readOnly = true)
 	public ReservationDashboardResponse getStaffDashboard(LocalDate date) {
-		return getDashboard(date);
-	}
-
-	@Transactional(readOnly = true)
-	public ReservationDashboardResponse getDashboard(LocalDate date) {
 		LocalDate dashboardDate = date == null ? LocalDate.now() : date;
 		List<Reservation> reservations = reservationRepository.findAll();
 		Set<Long> occupiedRoomIds = roomAllocationRepository.findAll().stream()

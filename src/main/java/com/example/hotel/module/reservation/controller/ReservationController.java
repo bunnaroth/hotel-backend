@@ -55,22 +55,10 @@ public class ReservationController {
 				bookingReference, guestName, status, checkInFrom, checkInTo, pageable);
 	}
 
-	@GetMapping("/dashboard")
-	public ReservationDashboardResponse dashboard(
-			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-		return reservationService.getDashboard(date);
-	}
-
 	@GetMapping("/staff/dashboard")
 	public ReservationDashboardResponse staffDashboard(
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
 		return reservationService.getStaffDashboard(date);
-	}
-
-	@GetMapping("/occupancy")
-	public ReservationDashboardResponse occupancy(
-			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-		return reservationService.getDashboard(date);
 	}
 
 	@GetMapping("/{id}")
