@@ -41,6 +41,8 @@ import com.example.hotel.module.room.entity.HotelRoom;
 import com.example.hotel.module.room.enums.HousekeepingStatus;
 import com.example.hotel.module.room.enums.OperationalStatus;
 import com.example.hotel.module.room.repository.RoomRepository;
+import com.example.hotel.module.room.repository.RoomTypeImageRepository;
+import com.example.hotel.module.room.entity.RoomTypeImage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -68,6 +70,7 @@ public class ReservationService {
 	private final ReservationPaymentRepository reservationPaymentRepository;
 	private final RoomAllocationRepository roomAllocationRepository;
 	private final HotelSettingsRepository hotelSettingsRepository;
+	private final RoomTypeImageRepository roomTypeImageRepository;
 	private final ReservationPricingService pricingService;
 	private final Duration pendingTtl;
 
@@ -79,6 +82,7 @@ public class ReservationService {
 			ReservationPaymentRepository reservationPaymentRepository,
 			RoomAllocationRepository roomAllocationRepository,
 			HotelSettingsRepository hotelSettingsRepository,
+			RoomTypeImageRepository roomTypeImageRepository,
 			ReservationPricingService pricingService,
 			@Value("${app.reservation.pending-ttl}") Duration pendingTtl) {
 		if (pendingTtl.isNegative() || pendingTtl.isZero()) {
@@ -91,6 +95,7 @@ public class ReservationService {
 		this.reservationPaymentRepository = reservationPaymentRepository;
 		this.roomAllocationRepository = roomAllocationRepository;
 		this.hotelSettingsRepository = hotelSettingsRepository;
+		this.roomTypeImageRepository = roomTypeImageRepository;
 		this.pricingService = pricingService;
 		this.pendingTtl = pendingTtl;
 	}
@@ -113,7 +118,7 @@ public class ReservationService {
 		List<HousekeepingStatus> effectiveHousekeepingStatuses = housekeepingStatus == null
 				? ASSIGNABLE_HOUSEKEEPING_STATUSES
 				: List.of(housekeepingStatus);
-		return roomRepository.findAvailableRooms(
+		Page<HotelRoom> availableRooms = roomRepository.findAvailableRooms(
 						roomTypeId,
 						guestCount,
 						checkInDate,
@@ -121,14 +126,28 @@ public class ReservationService {
 						effectiveOperationalStatus,
 						effectiveHousekeepingStatuses,
 						floorLabel,
-						pageable)
-				.map(room -> new AvailableRoomResponse(
+						pageable);
+		List<Long> roomTypeIds = availableRooms.getContent().stream()
+				.map(room -> room.getRoomType().getId())
+				.distinct()
+				.toList();
+		Map<Long, Long> coverImageIdsByRoomType = roomTypeIds.isEmpty()
+				? Map.of()
+				: roomTypeImageRepository.findAllByRoomType_IdInAndCoverImageTrue(roomTypeIds).stream()
+						.collect(Collectors.toMap(
+								image -> image.getRoomType().getId(),
+								RoomTypeImage::getId));
+		return availableRooms.map(room -> {
+			Long coverImageId = coverImageIdsByRoomType.get(room.getRoomType().getId());
+			return new AvailableRoomResponse(
 						room.getId(),
 						room.getRoomType().getId(),
 						room.getRoomType().getCode(),
 						room.getRoomType().getName(),
 						room.getRoomType().getMaxOccupancy(),
-						room.getRoomType().getBaseNightlyRate()));
+						room.getRoomType().getBaseNightlyRate(),
+						coverImageId == null ? null : "/api/room-type-images/" + coverImageId);
+		});
 	}
 
 	@Transactional
@@ -173,8 +192,8 @@ public class ReservationService {
 				request.checkOutDate(),
 				now.plus(pendingTtl)));
 		List<ReservationGuest> reservationGuests = new ArrayList<>();
-		for (int index = 0; index < guests.size(); index++) {
-			reservationGuests.add(new ReservationGuest(reservation, guests.get(index), index == 0));
+		for (Guest guest : guests) {
+			reservationGuests.add(new ReservationGuest(reservation, guest));
 		}
 		reservationGuestRepository.saveAll(reservationGuests);
 		List<RoomAllocation> allocations = rooms.stream()

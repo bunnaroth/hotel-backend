@@ -14,6 +14,11 @@ import com.example.hotel.module.payment.stripe.StripePaymentNotConfiguredExcepti
 import com.example.hotel.module.payment.stripe.StripePaymentProviderException;
 import com.example.hotel.module.payment.stripe.StripeWebhookSignatureException;
 import com.example.hotel.module.room.service.RoomInventoryService.ResourceNotFoundException;
+import com.example.hotel.module.room.service.RoomInventoryService.RoomHasReservationHistoryException;
+import com.example.hotel.module.room.service.RoomTypeImageService.InvalidRoomImageException;
+import com.example.hotel.module.room.service.RoomTypeImageService.RoomTypeImageNotFoundException;
+import com.example.hotel.module.room.service.S3RoomImageStorage.StorageNotConfiguredException;
+import com.example.hotel.module.room.service.S3RoomImageStorage.StorageOperationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -26,6 +31,7 @@ public class ApiExceptionHandler {
 	@ExceptionHandler({
 			HotelSettingsNotFoundException.class,
 			ResourceNotFoundException.class,
+			RoomTypeImageNotFoundException.class,
 			ReservationNotFoundException.class,
 			StripeCheckoutNotFoundException.class
 	})
@@ -41,6 +47,11 @@ public class ApiExceptionHandler {
 				HttpStatus.CONFLICT, "The request conflicts with an existing record or database constraint");
 	}
 
+	@ExceptionHandler(RoomHasReservationHistoryException.class)
+	ProblemDetail handleRoomHasReservationHistory(RoomHasReservationHistoryException exception) {
+		return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+	}
+
 	@ExceptionHandler(RoomUnavailableException.class)
 	ProblemDetail handleRoomUnavailable(RoomUnavailableException exception) {
 		return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
@@ -49,6 +60,23 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(InvalidReservationRequestException.class)
 	ProblemDetail handleInvalidReservation(InvalidReservationRequestException exception) {
 		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+	}
+
+	@ExceptionHandler(InvalidRoomImageException.class)
+	ProblemDetail handleInvalidRoomImage(InvalidRoomImageException exception) {
+		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+	}
+
+	@ExceptionHandler(StorageNotConfiguredException.class)
+	ProblemDetail handleRoomImageStorageNotConfigured() {
+		return ProblemDetail.forStatusAndDetail(
+				HttpStatus.SERVICE_UNAVAILABLE, "Room image storage is not configured");
+	}
+
+	@ExceptionHandler(StorageOperationException.class)
+	ProblemDetail handleRoomImageStorageFailure() {
+		return ProblemDetail.forStatusAndDetail(
+				HttpStatus.BAD_GATEWAY, "Room image storage could not complete the request");
 	}
 
 	@ExceptionHandler(IllegalStateException.class)

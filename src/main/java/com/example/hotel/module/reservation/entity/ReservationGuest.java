@@ -3,7 +3,6 @@ package com.example.hotel.module.reservation.entity;
 import java.util.UUID;
 
 import com.example.hotel.module.guest.entity.Guest;
-import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
@@ -27,16 +26,12 @@ public class ReservationGuest {
 	@JoinColumn(name = "guest_id", nullable = false)
 	private Guest guest;
 
-	@Column(name = "is_primary", nullable = false)
-	private boolean primary;
-
 	protected ReservationGuest() {
 	}
 
-	public ReservationGuest(Reservation reservation, Guest guest, boolean primary) {
+	public ReservationGuest(Reservation reservation, Guest guest) {
 		this.reservation = reservation;
 		this.guest = guest;
-		this.primary = primary;
 	}
 
 	public UUID getGuestId() {
@@ -60,6 +55,6 @@ public class ReservationGuest {
 	}
 
 	public boolean isPrimary() {
-		return primary;
+		return reservation.getPrimaryGuest().getId().equals(guest.getId());
 	}
 }

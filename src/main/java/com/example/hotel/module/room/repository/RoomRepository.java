@@ -2,17 +2,24 @@ package com.example.hotel.module.room.repository;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
 import com.example.hotel.module.room.entity.HotelRoom;
 import com.example.hotel.module.room.enums.HousekeepingStatus;
 import com.example.hotel.module.room.enums.OperationalStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface RoomRepository extends JpaRepository<HotelRoom, Long> {
+
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("select room from HotelRoom room where room.id = :id")
+	Optional<HotelRoom> findByIdForUpdate(@Param("id") Long id);
 
 	@Query("""
 			select room from HotelRoom room

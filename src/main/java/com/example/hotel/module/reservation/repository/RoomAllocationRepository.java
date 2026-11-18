@@ -13,4 +13,6 @@ public interface RoomAllocationRepository extends JpaRepository<RoomAllocation, 
 	List<RoomAllocation> findAllByReservation_IdAndActiveTrue(UUID reservationId);
 
 	List<RoomAllocation> findAllByReservation_IdIn(List<UUID> reservationIds);
+
+	boolean existsByRoom_Id(Long roomId);
 }
