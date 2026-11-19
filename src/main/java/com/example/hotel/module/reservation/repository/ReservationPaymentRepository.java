@@ -1,6 +1,5 @@
 package com.example.hotel.module.reservation.repository;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -12,12 +11,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface ReservationPaymentRepository extends JpaRepository<ReservationPayment, UUID> {
-
-	List<ReservationPayment> findAllByReservation_Id(UUID reservationId);
-
-	List<ReservationPayment> findAllByReservation_IdOrderByCreatedAtAsc(UUID reservationId);
-
-	Optional<ReservationPayment> findFirstByReservation_IdOrderByCreatedAtDesc(UUID reservationId);
 
 	Optional<ReservationPayment> findFirstByReservation_IdAndProviderOrderByCreatedAtDesc(
 			UUID reservationId,

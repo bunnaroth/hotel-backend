@@ -2,7 +2,6 @@ package com.example.hotel.module.room.entity;
 
 import java.time.Instant;
 
-import com.example.hotel.module.room.enums.HousekeepingStatus;
 import com.example.hotel.module.room.enums.OperationalStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -32,16 +31,9 @@ public class HotelRoom {
 	@JoinColumn(name = "room_type_id", nullable = false)
 	private RoomType roomType;
 
-	@Column(name = "floor_label", length = 32)
-	private String floorLabel;
-
 	@Enumerated(EnumType.STRING)
 	@Column(name = "operational_status", nullable = false, length = 24)
 	private OperationalStatus operationalStatus;
-
-	@Enumerated(EnumType.STRING)
-	@Column(name = "housekeeping_status", nullable = false, length = 24)
-	private HousekeepingStatus housekeepingStatus;
 
 	@Column(name = "created_at", nullable = false, insertable = false, updatable = false)
 	private Instant createdAt;
@@ -50,29 +42,6 @@ public class HotelRoom {
 	private Instant updatedAt = Instant.now();
 
 	protected HotelRoom() {
-	}
-
-	public HotelRoom(
-			String roomNumber,
-			RoomType roomType,
-			String floorLabel,
-			OperationalStatus operationalStatus,
-			HousekeepingStatus housekeepingStatus) {
-		update(roomNumber, roomType, floorLabel, operationalStatus, housekeepingStatus);
-	}
-
-	public void update(
-			String roomNumber,
-			RoomType roomType,
-			String floorLabel,
-			OperationalStatus operationalStatus,
-			HousekeepingStatus housekeepingStatus) {
-		this.roomNumber = roomNumber.trim();
-		this.roomType = roomType;
-		this.floorLabel = floorLabel == null || floorLabel.isBlank() ? null : floorLabel.trim();
-		this.operationalStatus = operationalStatus;
-		this.housekeepingStatus = housekeepingStatus;
-		this.updatedAt = Instant.now();
 	}
 
 	public Long getId() {
@@ -87,15 +56,8 @@ public class HotelRoom {
 		return roomType;
 	}
 
-	public String getFloorLabel() {
-		return floorLabel;
-	}
-
 	public OperationalStatus getOperationalStatus() {
 		return operationalStatus;
 	}
 
-	public HousekeepingStatus getHousekeepingStatus() {
-		return housekeepingStatus;
-	}
 }

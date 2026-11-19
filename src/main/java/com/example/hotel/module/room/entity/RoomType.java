@@ -3,8 +3,12 @@ package com.example.hotel.module.room.entity;
 import java.math.BigDecimal;
 import java.time.Instant;
 
+import com.example.hotel.module.room.enums.RoomCategory;
+import com.example.hotel.module.room.enums.RoomImageKey;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -25,11 +29,22 @@ public class RoomType {
 	@Column(name = "name", nullable = false, length = 100)
 	private String name;
 
+	@Enumerated(EnumType.STRING)
+	@Column(name = "category", nullable = false, length = 16)
+	private RoomCategory category;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "image_key", nullable = false, length = 32)
+	private RoomImageKey imageKey;
+
 	@Column(name = "description", length = 1000)
 	private String description;
 
 	@Column(name = "max_occupancy", nullable = false)
 	private short maxOccupancy;
+
+	@Column(name = "room_limit", nullable = false)
+	private int roomLimit;
 
 	@Column(name = "base_nightly_rate", nullable = false, precision = 12, scale = 2)
 	private BigDecimal baseNightlyRate;
@@ -46,32 +61,6 @@ public class RoomType {
 	protected RoomType() {
 	}
 
-	public RoomType(
-			String code,
-			String name,
-			String description,
-			short maxOccupancy,
-			BigDecimal baseNightlyRate,
-			boolean active) {
-		update(code, name, description, maxOccupancy, baseNightlyRate, active);
-	}
-
-	public void update(
-			String code,
-			String name,
-			String description,
-			short maxOccupancy,
-			BigDecimal baseNightlyRate,
-			boolean active) {
-		this.code = code.trim().toUpperCase(java.util.Locale.ROOT);
-		this.name = name.trim();
-		this.description = description == null || description.isBlank() ? null : description.trim();
-		this.maxOccupancy = maxOccupancy;
-		this.baseNightlyRate = baseNightlyRate;
-		this.active = active;
-		this.updatedAt = Instant.now();
-	}
-
 	public Long getId() {
 		return id;
 	}
@@ -84,12 +73,24 @@ public class RoomType {
 		return name;
 	}
 
+	public RoomCategory getCategory() {
+		return category;
+	}
+
+	public RoomImageKey getImageKey() {
+		return imageKey;
+	}
+
 	public String getDescription() {
 		return description;
 	}
 
 	public short getMaxOccupancy() {
 		return maxOccupancy;
+	}
+
+	public int getRoomLimit() {
+		return roomLimit;
 	}
 
 	public BigDecimal getBaseNightlyRate() {

@@ -7,7 +7,8 @@ public record AvailableRoomResponse(
 		Long roomTypeId,
 		String roomTypeCode,
 		String roomTypeName,
+		String category,
+		String imageKey,
 		short maxOccupancy,
-		BigDecimal baseNightlyRate,
-		String coverImageUrl) {
+		BigDecimal baseNightlyRate) {
 }

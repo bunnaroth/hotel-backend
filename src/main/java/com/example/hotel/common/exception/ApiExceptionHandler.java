@@ -3,8 +3,6 @@ package com.example.hotel.common.exception;
 import java.net.URI;
 
 import jakarta.validation.ConstraintViolationException;
-import com.example.hotel.module.hotel.service.HotelSettingsService.HotelSettingsNotFoundException;
-import com.example.hotel.module.guest.service.GuestService.InvalidGuestSearchException;
 import com.example.hotel.module.reservation.service.ReservationService.InvalidReservationRequestException;
 import com.example.hotel.module.reservation.service.ReservationService.RoomUnavailableException;
 import com.example.hotel.module.reservation.service.ReservationService.ReservationNotFoundException;
@@ -13,12 +11,6 @@ import com.example.hotel.module.payment.stripe.StripeGatewayException;
 import com.example.hotel.module.payment.stripe.StripePaymentNotConfiguredException;
 import com.example.hotel.module.payment.stripe.StripePaymentProviderException;
 import com.example.hotel.module.payment.stripe.StripeWebhookSignatureException;
-import com.example.hotel.module.room.service.RoomInventoryService.ResourceNotFoundException;
-import com.example.hotel.module.room.service.RoomInventoryService.RoomHasReservationHistoryException;
-import com.example.hotel.module.room.service.RoomTypeImageService.InvalidRoomImageException;
-import com.example.hotel.module.room.service.RoomTypeImageService.RoomTypeImageNotFoundException;
-import com.example.hotel.module.room.service.S3RoomImageStorage.StorageNotConfiguredException;
-import com.example.hotel.module.room.service.S3RoomImageStorage.StorageOperationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -29,9 +21,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class ApiExceptionHandler {
 
 	@ExceptionHandler({
-			HotelSettingsNotFoundException.class,
-			ResourceNotFoundException.class,
-			RoomTypeImageNotFoundException.class,
 			ReservationNotFoundException.class,
 			StripeCheckoutNotFoundException.class
 	})
@@ -47,11 +36,6 @@ public class ApiExceptionHandler {
 				HttpStatus.CONFLICT, "The request conflicts with an existing record or database constraint");
 	}
 
-	@ExceptionHandler(RoomHasReservationHistoryException.class)
-	ProblemDetail handleRoomHasReservationHistory(RoomHasReservationHistoryException exception) {
-		return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
-	}
-
 	@ExceptionHandler(RoomUnavailableException.class)
 	ProblemDetail handleRoomUnavailable(RoomUnavailableException exception) {
 		return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
@@ -60,23 +44,6 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(InvalidReservationRequestException.class)
 	ProblemDetail handleInvalidReservation(InvalidReservationRequestException exception) {
 		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
-	}
-
-	@ExceptionHandler(InvalidRoomImageException.class)
-	ProblemDetail handleInvalidRoomImage(InvalidRoomImageException exception) {
-		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
-	}
-
-	@ExceptionHandler(StorageNotConfiguredException.class)
-	ProblemDetail handleRoomImageStorageNotConfigured() {
-		return ProblemDetail.forStatusAndDetail(
-				HttpStatus.SERVICE_UNAVAILABLE, "Room image storage is not configured");
-	}
-
-	@ExceptionHandler(StorageOperationException.class)
-	ProblemDetail handleRoomImageStorageFailure() {
-		return ProblemDetail.forStatusAndDetail(
-				HttpStatus.BAD_GATEWAY, "Room image storage could not complete the request");
 	}
 
 	@ExceptionHandler(IllegalStateException.class)
@@ -97,11 +64,6 @@ public class ApiExceptionHandler {
 	@ExceptionHandler({StripePaymentProviderException.class, StripeGatewayException.class})
 	ProblemDetail handleStripeProviderFailure() {
 		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY, "Stripe payment processing failed");
-	}
-
-	@ExceptionHandler(InvalidGuestSearchException.class)
-	ProblemDetail handleInvalidGuestSearch(InvalidGuestSearchException exception) {
-		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
 	}
 
 	@ExceptionHandler(ConstraintViolationException.class)
