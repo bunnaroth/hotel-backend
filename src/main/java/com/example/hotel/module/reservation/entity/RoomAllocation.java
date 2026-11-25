@@ -40,14 +40,18 @@ public class RoomAllocation {
 	@Column(name = "active", nullable = false)
 	private boolean active = true;
 
+	@Column(name = "allocated_units", nullable = false)
+	private int allocatedUnits;
+
 	protected RoomAllocation() {
 	}
 
-	public RoomAllocation(Reservation reservation, HotelRoom room) {
+	public RoomAllocation(Reservation reservation, HotelRoom room, int allocatedUnits) {
 		this.reservation = reservation;
 		this.room = room;
 		this.checkInDate = reservation.getCheckInDate();
 		this.checkOutDate = reservation.getCheckOutDate();
+		this.allocatedUnits = allocatedUnits;
 	}
 
 	public void release() {
@@ -76,5 +80,9 @@ public class RoomAllocation {
 
 	public boolean isActive() {
 		return active;
+	}
+
+	public int getAllocatedUnits() {
+		return allocatedUnits;
 	}
 }
