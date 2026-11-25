@@ -15,6 +15,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface ReservationRepository extends JpaRepository<Reservation, UUID> {
 
+	boolean existsByBookingReference(String bookingReference);
+
 	List<Reservation> findTop100ByStatusAndExpiresAtLessThanEqualOrderByExpiresAtAsc(
 			ReservationStatus status,
 			Instant now);

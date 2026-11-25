@@ -10,6 +10,10 @@ import com.example.hotel.module.reservation.dto.ReservationLookupResponse;
 import com.example.hotel.module.reservation.service.InvalidReservationLookupException;
 import com.example.hotel.module.reservation.service.ReservationLookupRateLimitException;
 import com.example.hotel.module.reservation.service.ReservationLookupService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.CacheControl;
@@ -24,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/public/reservation-lookups")
+@Tag(name = "Reservation lookup", description = "Account-free reservation lookup with email verification")
 public class PublicReservationLookupController {
 
 	private final ReservationLookupService reservationLookupService;
@@ -33,6 +38,14 @@ public class PublicReservationLookupController {
 	}
 
 	@PostMapping
+	@Operation(
+			summary = "Request a lookup verification code",
+			description = "Sends a one-time email verification code when the booking reference and primary guest email match. The same 202 acknowledgement is returned for matching and non-matching details to prevent booking enumeration. Response is not cacheable.")
+	@ApiResponses({
+			@ApiResponse(responseCode = "202", description = "Code request acknowledged"),
+			@ApiResponse(responseCode = "400", description = "Invalid booking reference or email"),
+			@ApiResponse(responseCode = "429", description = "Lookup rate limit exceeded")
+	})
 	public ResponseEntity<ReservationLookupChallengeResponse> requestCode(
 			@Valid @RequestBody ReservationLookupRequest request,
 			HttpServletRequest httpRequest) {
@@ -46,6 +59,14 @@ public class PublicReservationLookupController {
 	}
 
 	@PostMapping("/{challengeId}/verify")
+	@Operation(
+			summary = "Verify a lookup code",
+			description = "Verifies the emailed one-time code and returns the public reservation summary. Codes expire and have limited attempts. Response is not cacheable.")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "Code verified"),
+			@ApiResponse(responseCode = "400", description = "Code is invalid, expired, or exhausted"),
+			@ApiResponse(responseCode = "429", description = "Lookup rate limit exceeded")
+	})
 	public ResponseEntity<ReservationLookupResponse> verifyCode(
 			@PathVariable UUID challengeId,
 			@Valid @RequestBody ReservationLookupCodeRequest request) {

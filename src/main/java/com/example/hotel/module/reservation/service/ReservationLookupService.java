@@ -6,20 +6,29 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 
 import com.example.hotel.module.reservation.dto.ReservationLookupChallengeResponse;
+import com.example.hotel.module.reservation.dto.ReservationLookupRoomResponse;
 import com.example.hotel.module.reservation.dto.ReservationLookupResponse;
 import com.example.hotel.module.reservation.entity.Reservation;
 import com.example.hotel.module.reservation.entity.ReservationLookupChallenge;
+import com.example.hotel.module.reservation.entity.ReservationPayment;
+import com.example.hotel.module.reservation.entity.RoomAllocation;
 import com.example.hotel.module.reservation.repository.ReservationLookupChallengeRepository;
+import com.example.hotel.module.reservation.repository.ReservationPaymentRepository;
 import com.example.hotel.module.reservation.repository.ReservationRepository;
 import com.example.hotel.module.reservation.repository.RoomAllocationRepository;
+import com.example.hotel.module.room.entity.RoomType;
+import com.example.hotel.module.room.enums.RoomCategory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -40,10 +49,11 @@ public class ReservationLookupService {
 	private static final Duration CLEANUP_RETENTION = Duration.ofDays(1);
 	private static final int MAX_CODE_ATTEMPTS = 5;
 	private static final String REQUEST_MESSAGE =
-			"If the booking details match, a verification code has been emailed.";
+			"Verification code has been sent.";
 
 	private final ReservationLookupChallengeRepository challengeRepository;
 	private final ReservationRepository reservationRepository;
+	private final ReservationPaymentRepository paymentRepository;
 	private final RoomAllocationRepository roomAllocationRepository;
 	private final JavaMailSender mailSender;
 	private final SecretKey signingKey;
@@ -54,6 +64,7 @@ public class ReservationLookupService {
 	public ReservationLookupService(
 			ReservationLookupChallengeRepository challengeRepository,
 			ReservationRepository reservationRepository,
+			ReservationPaymentRepository paymentRepository,
 			RoomAllocationRepository roomAllocationRepository,
 			JavaMailSender mailSender,
 			SecretKey signingKey,
@@ -67,6 +78,7 @@ public class ReservationLookupService {
 		}
 		this.challengeRepository = challengeRepository;
 		this.reservationRepository = reservationRepository;
+		this.paymentRepository = paymentRepository;
 		this.roomAllocationRepository = roomAllocationRepository;
 		this.mailSender = mailSender;
 		this.signingKey = signingKey;
@@ -135,18 +147,42 @@ public class ReservationLookupService {
 		challenge.consume(now);
 		Reservation reservation = reservationRepository.findById(challenge.getReservationId())
 				.orElseThrow(InvalidReservationLookupException::new);
-		List<String> roomTypes = roomAllocationRepository
-				.findAllByReservation_Id(reservation.getId())
-				.stream()
-				.map(allocation -> allocation.getRoom().getRoomType().getName())
-				.sorted()
+		List<RoomAllocation> allocations = roomAllocationRepository.findAllByReservation_Id(reservation.getId());
+		Map<String, ReservationLookupRoomResponse> roomSummaries = new LinkedHashMap<>();
+		for (RoomAllocation allocation : allocations) {
+			RoomType roomType = allocation.getRoom().getRoomType();
+			int quantity = roomType.getCategory() == RoomCategory.DORMITORY
+					? allocation.getAllocatedUnits()
+					: 1;
+			ReservationLookupRoomResponse roomSummary = new ReservationLookupRoomResponse(
+					roomType.getCode(),
+					roomType.getName(),
+					roomType.getCategory(),
+					roomType.getImageKey(),
+					quantity);
+			roomSummaries.merge(
+					roomType.getCode(),
+					roomSummary,
+					(existing, added) -> new ReservationLookupRoomResponse(
+							existing.roomTypeCode(),
+							existing.roomTypeName(),
+							existing.category(),
+							existing.imageKey(),
+							existing.quantity() + added.quantity()));
+		}
+		List<ReservationLookupRoomResponse> rooms = roomSummaries.values().stream()
+				.sorted(Comparator.comparing(ReservationLookupRoomResponse::roomTypeName))
 				.toList();
+		ReservationPayment payment = paymentRepository
+				.findFirstByReservation_IdOrderByCreatedAtDesc(reservation.getId())
+				.orElse(null);
 		return new ReservationLookupResponse(
 				reservation.getBookingReference(),
 				reservation.getCheckInDate(),
 				reservation.getCheckOutDate(),
 				reservation.getStatus(),
-				roomTypes);
+				rooms,
+				payment == null ? null : payment.getStatus());
 	}
 
 	@Scheduled(cron = "${app.reservation-lookup.cleanup-cron:0 29 3 * * *}")

@@ -12,6 +12,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface ReservationPaymentRepository extends JpaRepository<ReservationPayment, UUID> {
 
+	Optional<ReservationPayment> findFirstByReservation_IdOrderByCreatedAtDesc(UUID reservationId);
+
 	Optional<ReservationPayment> findFirstByReservation_IdAndProviderOrderByCreatedAtDesc(
 			UUID reservationId,
 			String provider);

@@ -6,6 +6,7 @@ import java.time.temporal.ChronoUnit;
 import com.example.hotel.module.reservation.entity.Reservation;
 import com.example.hotel.module.reservation.entity.RoomAllocation;
 import com.example.hotel.module.reservation.repository.RoomAllocationRepository;
+import com.example.hotel.module.room.enums.RoomCategory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,7 +30,11 @@ public class ReservationPricingService {
 			BigDecimal nightlyRate = allocation.getRoom() == null || allocation.getRoom().getRoomType() == null
 					? BigDecimal.ZERO
 					: allocation.getRoom().getRoomType().getBaseNightlyRate();
-			total = total.add(nightlyRate.multiply(BigDecimal.valueOf(nights)));
+			int billableUnits = allocation.getRoom().getRoomType().getCategory() == RoomCategory.DORMITORY
+					? allocation.getAllocatedUnits()
+					: 1;
+			total = total
+					.add(nightlyRate.multiply(BigDecimal.valueOf(nights)).multiply(BigDecimal.valueOf(billableUnits)));
 		}
 		return total;
 	}

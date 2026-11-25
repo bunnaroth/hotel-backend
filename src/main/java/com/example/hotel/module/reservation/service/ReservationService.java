@@ -4,10 +4,14 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.Year;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TreeSet;
 import java.util.UUID;
 
 import com.example.hotel.module.guest.dto.GuestRequest;
@@ -16,6 +20,7 @@ import com.example.hotel.module.guest.repository.GuestRepository;
 import com.example.hotel.module.reservation.dto.AvailableRoomResponse;
 import com.example.hotel.module.reservation.dto.ReservationCreateRequest;
 import com.example.hotel.module.reservation.dto.ReservationResponse;
+import com.example.hotel.module.reservation.dto.RoomSelectionRequest;
 import com.example.hotel.module.reservation.entity.Reservation;
 import com.example.hotel.module.reservation.entity.ReservationGuest;
 import com.example.hotel.module.reservation.entity.RoomAllocation;
@@ -25,6 +30,7 @@ import com.example.hotel.module.reservation.repository.ReservationRepository;
 import com.example.hotel.module.reservation.repository.RoomAllocationRepository;
 import com.example.hotel.module.room.entity.HotelRoom;
 import com.example.hotel.module.room.enums.OperationalStatus;
+import com.example.hotel.module.room.enums.RoomCategory;
 import com.example.hotel.module.room.repository.RoomRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -78,8 +84,15 @@ public class ReservationService {
 				guestCount,
 				checkInDate,
 				checkOutDate,
+				RoomCategory.DORMITORY,
 				OperationalStatus.AVAILABLE,
 				pageable);
+		List<Long> roomIds = availableRooms.getContent().stream().map(HotelRoom::getId).toList();
+		Map<Long, Long> allocatedUnitsByRoom = new HashMap<>();
+		if (!roomIds.isEmpty()) {
+			roomAllocationRepository.sumActiveUnitsForRoomsAndDates(roomIds, checkInDate, checkOutDate)
+					.forEach(usage -> allocatedUnitsByRoom.put(usage.getRoomId(), usage.getAllocatedUnits()));
+		}
 		return availableRooms.map(room -> new AvailableRoomResponse(
 					room.getId(),
 					room.getRoomType().getId(),
@@ -88,31 +101,77 @@ public class ReservationService {
 					room.getRoomType().getCategory().name(),
 					room.getRoomType().getImageKey().name(),
 					room.getRoomType().getMaxOccupancy(),
-					room.getRoomType().getBaseNightlyRate()));
+					room.getRoomType().getBaseNightlyRate(),
+					room.getRoomType().getCategory() == RoomCategory.DORMITORY
+							? Math.toIntExact(room.getRoomType().getMaxOccupancy()
+									- allocatedUnitsByRoom.getOrDefault(room.getId(), 0L))
+							: 1));
 	}
 
 	@Transactional
 	public ReservationResponse createPendingReservation(ReservationCreateRequest request) {
 		validateDateRange(request.checkInDate(), request.checkOutDate());
-		if (new HashSet<>(request.roomIds()).size() != request.roomIds().size()) {
-			throw new InvalidReservationRequestException("A room may only be selected once");
+		List<RoomSelectionRequest> requestedSelections = request.roomSelections();
+		boolean useLegacyRoomIds = requestedSelections == null || requestedSelections.isEmpty();
+		List<Long> selectedRoomIds;
+		if (useLegacyRoomIds) {
+			selectedRoomIds = request.roomIds() == null ? List.of() : request.roomIds();
+		} else {
+			selectedRoomIds = requestedSelections.stream().map(RoomSelectionRequest::roomId).toList();
 		}
+		if (selectedRoomIds.isEmpty()) {
+			throw new InvalidReservationRequestException("At least one room selection is required");
+		}
+		if (new HashSet<>(selectedRoomIds).size() != selectedRoomIds.size()) {
+			throw new InvalidReservationRequestException("A physical room may only appear once in room selections");
+		}
+		TreeSet<Long> orderedRoomIds = new TreeSet<>(selectedRoomIds);
+		Map<Long, HotelRoom> roomsById = new HashMap<>();
+		for (Long roomId : orderedRoomIds) {
+			HotelRoom room = roomRepository.findByIdForUpdate(roomId)
+					.filter(candidate -> candidate.getOperationalStatus() == OperationalStatus.AVAILABLE
+							&& candidate.getRoomType().isActive())
+					.orElseThrow(RoomUnavailableException::new);
+			roomsById.put(roomId, room);
+		}
+		List<RoomSelectionRequest> roomSelections = useLegacyRoomIds
+				? selectedRoomIds.stream().map(roomId -> {
+					HotelRoom room = roomsById.get(roomId);
+					int quantity = room.getRoomType().getCategory() == RoomCategory.DORMITORY
+							? room.getRoomType().getMaxOccupancy()
+							: 1;
+					return new RoomSelectionRequest(roomId, quantity);
+				}).toList()
+				: requestedSelections;
 
 		List<GuestRequest> additionalGuests = request.additionalGuests() == null
 				? List.of()
 				: request.additionalGuests();
 		int guestCount = 1 + additionalGuests.size();
-		List<HotelRoom> rooms = roomRepository.findAvailableRooms(
-				request.roomIds(),
-				request.checkInDate(),
-				request.checkOutDate(),
-				OperationalStatus.AVAILABLE);
-		if (rooms.size() != request.roomIds().size()) {
-			throw new RoomUnavailableException();
+		int totalCapacity = 0;
+		Map<Long, Integer> allocatedUnitsByRoom = new HashMap<>();
+		for (RoomSelectionRequest selection : roomSelections) {
+			HotelRoom room = roomsById.get(selection.roomId());
+			long currentlyAllocated = roomAllocationRepository.sumActiveUnitsForRoomAndDates(
+					room.getId(), request.checkInDate(), request.checkOutDate());
+			if (room.getRoomType().getCategory() == RoomCategory.DORMITORY) {
+				int availableBeds = room.getRoomType().getMaxOccupancy() - Math.toIntExact(currentlyAllocated);
+				if (selection.quantity() > availableBeds) {
+					throw new RoomUnavailableException();
+				}
+				totalCapacity += selection.quantity();
+				allocatedUnitsByRoom.put(room.getId(), selection.quantity());
+			} else {
+				if (selection.quantity() != 1) {
+					throw new InvalidReservationRequestException("Private rooms must be selected one room at a time");
+				}
+				if (currentlyAllocated > 0) {
+					throw new RoomUnavailableException();
+				}
+				totalCapacity += room.getRoomType().getMaxOccupancy();
+				allocatedUnitsByRoom.put(room.getId(), 1);
+			}
 		}
-		int totalCapacity = rooms.stream()
-				.mapToInt(room -> room.getRoomType().getMaxOccupancy())
-				.sum();
 		if (totalCapacity < guestCount) {
 			throw new InvalidReservationRequestException("Selected rooms do not have enough guest capacity");
 		}
@@ -135,8 +194,11 @@ public class ReservationService {
 				.map(guest -> new ReservationGuest(reservation, guest))
 				.toList();
 		reservationGuestRepository.saveAll(reservationGuests);
-		List<RoomAllocation> allocations = rooms.stream()
-				.map(room -> new RoomAllocation(reservation, room))
+		List<RoomAllocation> allocations = roomSelections.stream()
+				.map(selection -> new RoomAllocation(
+						reservation,
+						roomsById.get(selection.roomId()),
+						allocatedUnitsByRoom.get(selection.roomId())))
 				.toList();
 		roomAllocationRepository.saveAll(allocations);
 		return toResponse(reservation, reservationGuests, allocations);
@@ -188,12 +250,19 @@ public class ReservationService {
 		}
 	}
 
-	private static String newBookingReference() {
-		char[] reference = new char[16];
-		for (int index = 0; index < reference.length; index++) {
-			reference[index] = REFERENCE_ALPHABET[RANDOM.nextInt(REFERENCE_ALPHABET.length)];
+	String newBookingReference() {
+		int year = Year.now().getValue() % 100;
+		for (int attempt = 0; attempt < 10; attempt++) {
+			char[] suffix = new char[6];
+			for (int index = 0; index < suffix.length; index++) {
+				suffix[index] = REFERENCE_ALPHABET[RANDOM.nextInt(REFERENCE_ALPHABET.length)];
+			}
+			String reference = String.format(Locale.ROOT, "HTL-%02d-%s", year, new String(suffix));
+			if (!reservationRepository.existsByBookingReference(reference)) {
+				return reference;
+			}
 		}
-		return new String(reference).toUpperCase(Locale.ROOT);
+		throw new IllegalStateException("Unable to generate a unique booking reference");
 	}
 
 	public static class InvalidReservationRequestException extends RuntimeException {
