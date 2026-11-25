@@ -44,6 +44,26 @@ public class HotelRoom {
 	protected HotelRoom() {
 	}
 
+	public HotelRoom(String roomNumber, RoomType roomType, OperationalStatus operationalStatus) {
+		this.roomNumber = roomNumber;
+		this.roomType = roomType;
+		this.operationalStatus = operationalStatus;
+		this.createdAt = Instant.now();
+		this.updatedAt = Instant.now();
+	}
+
+	public void update(String roomNumber, RoomType roomType, OperationalStatus operationalStatus) {
+		this.roomNumber = roomNumber;
+		this.roomType = roomType;
+		this.operationalStatus = operationalStatus;
+		this.updatedAt = Instant.now();
+	}
+
+	public void setOperationalStatus(OperationalStatus operationalStatus) {
+		this.operationalStatus = operationalStatus;
+		this.updatedAt = Instant.now();
+	}
+
 	public Long getId() {
 		return id;
 	}
@@ -58,6 +78,14 @@ public class HotelRoom {
 
 	public OperationalStatus getOperationalStatus() {
 		return operationalStatus;
+	}
+
+	public Instant getCreatedAt() {
+		return createdAt;
+	}
+
+	public Instant getUpdatedAt() {
+		return updatedAt;
 	}
 
 }

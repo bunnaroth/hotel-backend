@@ -11,6 +11,9 @@ import com.example.hotel.module.payment.stripe.StripeGatewayException;
 import com.example.hotel.module.payment.stripe.StripePaymentNotConfiguredException;
 import com.example.hotel.module.payment.stripe.StripePaymentProviderException;
 import com.example.hotel.module.payment.stripe.StripeWebhookSignatureException;
+import com.example.hotel.module.room.service.RoomManagementService.HotelRoomNotFoundException;
+import com.example.hotel.module.room.service.RoomManagementService.InvalidRoomManagementRequestException;
+import com.example.hotel.module.room.service.RoomManagementService.RoomTypeNotFoundException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -22,7 +25,9 @@ public class ApiExceptionHandler {
 
 	@ExceptionHandler({
 			ReservationNotFoundException.class,
-			StripeCheckoutNotFoundException.class
+			StripeCheckoutNotFoundException.class,
+			RoomTypeNotFoundException.class,
+			HotelRoomNotFoundException.class
 	})
 	ProblemDetail handleNotFound(RuntimeException exception) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
@@ -43,6 +48,11 @@ public class ApiExceptionHandler {
 
 	@ExceptionHandler(InvalidReservationRequestException.class)
 	ProblemDetail handleInvalidReservation(InvalidReservationRequestException exception) {
+		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+	}
+
+	@ExceptionHandler(InvalidRoomManagementRequestException.class)
+	ProblemDetail handleInvalidRoomManagementRequest(InvalidRoomManagementRequestException exception) {
 		return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
 	}
 

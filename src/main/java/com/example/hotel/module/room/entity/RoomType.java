@@ -61,6 +61,53 @@ public class RoomType {
 	protected RoomType() {
 	}
 
+	public RoomType(
+			String code,
+			String name,
+			RoomCategory category,
+			RoomImageKey imageKey,
+			String description,
+			short maxOccupancy,
+			int roomLimit,
+			BigDecimal baseNightlyRate) {
+		this.code = code;
+		this.name = name;
+		this.category = category;
+		this.imageKey = imageKey;
+		this.description = description;
+		this.maxOccupancy = maxOccupancy;
+		this.roomLimit = roomLimit;
+		this.baseNightlyRate = baseNightlyRate;
+		this.active = true;
+		this.createdAt = Instant.now();
+		this.updatedAt = Instant.now();
+	}
+
+	public void update(
+			String code,
+			String name,
+			RoomCategory category,
+			RoomImageKey imageKey,
+			String description,
+			short maxOccupancy,
+			int roomLimit,
+			BigDecimal baseNightlyRate) {
+		this.code = code;
+		this.name = name;
+		this.category = category;
+		this.imageKey = imageKey;
+		this.description = description;
+		this.maxOccupancy = maxOccupancy;
+		this.roomLimit = roomLimit;
+		this.baseNightlyRate = baseNightlyRate;
+		this.updatedAt = Instant.now();
+	}
+
+	public void setActive(boolean active) {
+		this.active = active;
+		this.updatedAt = Instant.now();
+	}
+
 	public Long getId() {
 		return id;
 	}
@@ -99,5 +146,13 @@ public class RoomType {
 
 	public boolean isActive() {
 		return active;
+	}
+
+	public Instant getCreatedAt() {
+		return createdAt;
+	}
+
+	public Instant getUpdatedAt() {
+		return updatedAt;
 	}
 }
