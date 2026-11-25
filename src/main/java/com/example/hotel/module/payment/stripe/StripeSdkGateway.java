@@ -66,6 +66,21 @@ public class StripeSdkGateway implements StripeGateway {
 	}
 
 	@Override
+	public CheckoutSessionStatus retrieveCheckoutSession(String sessionId, String secretKey) {
+		try {
+			Session session = Session.retrieve(
+					sessionId,
+					requestOptions(secretKey, null));
+			return new CheckoutSessionStatus(
+					session.getStatus(),
+					session.getPaymentStatus(),
+					session.getPaymentIntent());
+		} catch (StripeException exception) {
+			throw new StripeGatewayException("Stripe could not retrieve the checkout session", exception);
+		}
+	}
+
+	@Override
 	public WebhookEvent verifyWebhook(String payload, String signature, String webhookSecret) {
 		final Event event;
 		try {
@@ -109,9 +124,14 @@ public class StripeSdkGateway implements StripeGateway {
 	}
 
 	private static RequestOptions requestOptions(String secretKey, String idempotencyKey) {
-		return RequestOptions.builder()
+		RequestOptions.RequestOptionsBuilder options = RequestOptions.builder()
 				.setApiKey(secretKey)
-				.setIdempotencyKey(idempotencyKey)
-				.build();
+				.setConnectTimeout(3_000)
+				.setReadTimeout(5_000)
+				.setMaxNetworkRetries(0);
+		if (idempotencyKey != null) {
+			options.setIdempotencyKey(idempotencyKey);
+		}
+		return options.build();
 	}
 }

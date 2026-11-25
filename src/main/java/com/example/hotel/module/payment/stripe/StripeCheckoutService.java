@@ -13,11 +13,13 @@ import com.example.hotel.module.hotel.entity.HotelSettings;
 import com.example.hotel.module.hotel.repository.HotelSettingsRepository;
 import com.example.hotel.module.payment.stripe.StripeGateway.CheckoutRequest;
 import com.example.hotel.module.payment.stripe.StripeGateway.CheckoutSession;
+import com.example.hotel.module.payment.stripe.StripeGateway.CheckoutSessionStatus;
 import com.example.hotel.module.payment.stripe.StripeGateway.WebhookEvent;
 import com.example.hotel.module.reservation.dto.StripeCheckoutSessionResponse;
 import com.example.hotel.module.reservation.dto.StripeCheckoutStatusResponse;
 import com.example.hotel.module.reservation.entity.Reservation;
 import com.example.hotel.module.reservation.entity.ReservationPayment;
+import com.example.hotel.module.reservation.event.ReservationConfirmedEvent;
 import com.example.hotel.module.reservation.enums.ReservationPaymentStatus;
 import com.example.hotel.module.reservation.enums.ReservationStatus;
 import com.example.hotel.module.reservation.repository.ReservationPaymentRepository;
@@ -25,6 +27,7 @@ import com.example.hotel.module.reservation.repository.ReservationRepository;
 import com.example.hotel.module.reservation.service.ReservationPricingService;
 import com.example.hotel.module.reservation.service.ReservationService.ReservationNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +49,7 @@ public class StripeCheckoutService {
 	private final HotelSettingsRepository hotelSettingsRepository;
 	private final ReservationPricingService pricingService;
 	private final StripeGateway stripeGateway;
+	private final ApplicationEventPublisher eventPublisher;
 	private final String secretKey;
 	private final String webhookSecret;
 	private final String successUrl;
@@ -57,6 +61,7 @@ public class StripeCheckoutService {
 			HotelSettingsRepository hotelSettingsRepository,
 			ReservationPricingService pricingService,
 			StripeGateway stripeGateway,
+			ApplicationEventPublisher eventPublisher,
 			@Value("${app.payment.stripe.secret-key:}") String secretKey,
 			@Value("${app.payment.stripe.webhook-secret:}") String webhookSecret,
 			@Value("${app.payment.stripe.success-url}") String successUrl,
@@ -66,6 +71,7 @@ public class StripeCheckoutService {
 		this.hotelSettingsRepository = hotelSettingsRepository;
 		this.pricingService = pricingService;
 		this.stripeGateway = stripeGateway;
+		this.eventPublisher = eventPublisher;
 		this.secretKey = secretKey;
 		this.webhookSecret = webhookSecret;
 		this.successUrl = successUrl;
@@ -152,16 +158,41 @@ public class StripeCheckoutService {
 		}
 	}
 
-	@Transactional(readOnly = true)
+	@Transactional
 	public StripeCheckoutStatusResponse getCheckoutStatus(String sessionId) {
 		ReservationPayment payment = paymentRepository.findByCheckoutSessionId(sessionId)
 				.orElseThrow(() -> new StripeCheckoutNotFoundException(sessionId));
+		if (payment.getStatus() == ReservationPaymentStatus.PENDING) {
+			reconcileCheckoutSession(sessionId);
+			payment = paymentRepository.findByCheckoutSessionId(sessionId)
+					.orElseThrow(() -> new StripeCheckoutNotFoundException(sessionId));
+		}
 		Reservation reservation = payment.getReservation();
 		return new StripeCheckoutStatusResponse(
 				reservation.getId(),
 				reservation.getBookingReference(),
 				reservation.getStatus(),
 				payment.getStatus());
+	}
+
+	private void reconcileCheckoutSession(String sessionId) {
+		requireSecretKey();
+		CheckoutSessionStatus checkout = stripeGateway.retrieveCheckoutSession(sessionId, secretKey);
+		if ("paid".equals(checkout.paymentStatus())) {
+			markPaymentSuccessful(new WebhookEvent(
+					"status-reconciliation",
+					"checkout.session.completed",
+					sessionId,
+					checkout.paymentStatus(),
+					checkout.paymentIntentId()));
+		} else if ("expired".equals(checkout.status())) {
+			markPaymentFailed(new WebhookEvent(
+					"status-reconciliation",
+					"checkout.session.expired",
+					sessionId,
+					checkout.paymentStatus(),
+					checkout.paymentIntentId()));
+		}
 	}
 
 	@Transactional
@@ -198,6 +229,11 @@ public class StripeCheckoutService {
 		payment.setStatus(ReservationPaymentStatus.CAPTURED);
 		if (reservation.getStatus() == ReservationStatus.PENDING) {
 			reservation.transitionTo(ReservationStatus.CONFIRMED, Instant.now());
+			var primaryGuest = reservation.getPrimaryGuest();
+			eventPublisher.publishEvent(new ReservationConfirmedEvent(
+					reservation.getBookingReference(),
+					primaryGuest.getFullName(),
+					primaryGuest.getEmail()));
 		} else if (reservation.getStatus() == ReservationStatus.CANCELLED
 				|| reservation.getStatus() == ReservationStatus.NO_SHOW) {
 			requireSecretKey();

@@ -9,6 +9,8 @@ public interface StripeGateway {
 
 	CheckoutSession createCheckoutSession(CheckoutRequest request, String secretKey, String idempotencyKey);
 
+	CheckoutSessionStatus retrieveCheckoutSession(String sessionId, String secretKey);
+
 	WebhookEvent verifyWebhook(String payload, String signature, String webhookSecret);
 
 	void refundPaymentIntent(String paymentIntentId, long amountMinor, String secretKey, String idempotencyKey);
@@ -28,6 +30,9 @@ public interface StripeGateway {
 	}
 
 	record CheckoutSession(String id, String url, Instant expiresAt) {
+	}
+
+	record CheckoutSessionStatus(String status, String paymentStatus, String paymentIntentId) {
 	}
 
 	record WebhookEvent(String id, String type, String sessionId, String paymentStatus, String paymentIntentId) {
